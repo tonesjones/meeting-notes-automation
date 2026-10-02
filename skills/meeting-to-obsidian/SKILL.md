@@ -97,7 +97,9 @@ On Windows, if `python` isn't found, try `py`. The script prints one JSON line:
 - `created`: new note at `path`.
 - `exists`: already filed. Nothing was written. Re-run with `--update` only if the user asked to refresh it,
   because `--update` overwrites any edits they made to that note.
-- `error`: fix the payload per the message and retry. If it's a vault problem, ask the user.
+- `updated`: only with `--update`; the existing note was overwritten in place.
+- `error`: fix the payload per the message and retry. If it's a vault problem (`Vault not found`,
+  `No vault configured`), go back to step 1 and don't retry blindly.
 
 Use `--dry-run` to preview the markdown without writing anything.
 

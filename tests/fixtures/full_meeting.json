@@ -1,0 +1,20 @@
+{
+  "meeting_id": "AAMkAGI2TG93AAA=",
+  "title": "Acme Corp Quarterly Review",
+  "date": "2026-06-25",
+  "start_time": "14:00",
+  "end_time": "15:00",
+  "organizer": "Tony Jiang",
+  "company": "Acme Corp",
+  "attendees": ["Tony Jiang", "Alice Chen"],
+  "tags": ["customer"],
+  "summary": ["Reviewed Q2 numbers.", "Discussed EU expansion."],
+  "decisions": ["Proceed with EU pilot in Q4."],
+  "action_items": [
+    {"task": "Send updated pricing FAQ", "owner": "Tony Jiang", "due": "2026-06-27"},
+    {"task": "Schedule procurement follow-up", "owner": "Bob Rivera"},
+    {"task": "Draft EU compliance one-pager"}
+  ],
+  "notes": "Free-form markdown here.",
+  "source_url": "https://teams.microsoft.com/l/meetingrecap?x=1"
+}

@@ -1,237 +1,212 @@
 # Meeting Notes Automation
 
-Automatically capture and organize Teams meeting notes from Copilot recaps into your Obsidian vault—no manual copying, formatting, or filing required.
+Ask Claude to "file yesterday's meetings to Obsidian" and get structured markdown notes (summary, decisions, action items, attendees, company) in your vault. It is a Claude skill that reads your Teams meetings through the Microsoft 365 connector and writes each one with a small deterministic Python script.
 
-## What It Does
+It replaces the v1 Windows clipboard + hotkey macro and its regex parser. Nothing to copy, paste or trigger by hand.
 
-After a Teams meeting with Copilot enabled:
+## How It Works
 
-1. Copy the Copilot-generated recap (Ctrl+A, Ctrl+C)
-2. Trigger a Windows hotkey
-3. A Python script parses the recap, extracts key fields (title, date, time, attendees, summary, action items), and writes a structured markdown file directly into your Obsidian vault
+1. You ask Claude (Cowork or Claude Code) to file one or more meetings.
+2. Claude finds the meetings through the Microsoft 365 connector and skips any that are already filed.
+3. Claude extracts the summary, decisions and action items from each meeting's Copilot recap (or the transcript if there is no recap).
+4. `write_note.py` writes the note deterministically: fixed folder, filename and frontmatter, and de-duplication by meeting id, so re-runs never create duplicates.
 
-The script handles messy, variable recap formats and organizes notes by year under a configurable folder structure (e.g., `Customer Meetings/2026/`).
+## Requirements
 
-**No browser automation, no Graph API, no IT approvals needed**—just clipboard + disk.
+- Python 3.10+ (standard library only, nothing to `pip install`)
+- Claude with the Microsoft 365 connector enabled
+- An Obsidian vault (a local folder)
 
-## Setup
+## Setup: Claude Code
 
-### Prerequisites
+1. Copy `skills/meeting-to-obsidian/config.example.json` to `skills/meeting-to-obsidian/config.json` and edit it (see [Configuration](#configuration)).
+2. Install the skill into `%USERPROFILE%\.claude\skills\`. A directory junction keeps it in sync with `git pull` and works without admin rights:
 
-- **Python 3.10+** (tested on 3.13)
-- **Windows** (hotkey automation uses Windows shortcuts; clipboard reading works cross-platform)
-- An **Obsidian vault** on your local machine
-- **Teams with Copilot Pro** (or your org's equivalent)
+   ```bat
+   mklink /J "%USERPROFILE%\.claude\skills\meeting-to-obsidian" "C:\path\to\meeting-notes-automation\skills\meeting-to-obsidian"
+   ```
 
-### Installation
+   Or simply copy the `meeting-to-obsidian` folder there. On macOS/Linux use `ln -s` to `~/.claude/skills/meeting-to-obsidian`.
+3. Check that the Microsoft 365 connector is available in your session with `/mcp`.
 
-1. **Clone or download this repository**
+## Setup: Cowork
+
+1. Create `skills/meeting-to-obsidian/config.json` as above. `vault_path` doesn't matter in Cowork; the other keys do.
+2. Package the skill:
+
    ```bash
-   git clone https://github.com/<your-username>/meeting-notes-automation.git
-   cd meeting-notes-automation
+   python scripts/package_skill.py
    ```
 
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Configure `config.json`**
-   ```json
-   {
-     "vault_path": "C:\\Users\\<YourUsername>\\Documents\\<VaultName>",
-     "meetings_subfolder": "Customer Meetings",
-     "default_tags": ["meeting", "customer"]
-   }
-   ```
-   - `vault_path`: Absolute path to your Obsidian vault root
-   - `meetings_subfolder`: Folder within vault where meeting notes land (created if missing)
-   - `default_tags`: Tags to add to the YAML frontmatter of each note
-
-4. **(Optional) Set up a Windows hotkey**
-
-   To trigger the script from anywhere via a hotkey:
-
-   - Create a Windows shortcut to `capture.py`:
-     - Right-click on `capture.py` → Send to → Desktop (create shortcut)
-     - Or: Right-click desktop → New → Shortcut → enter the path to `capture.py`
-
-   - Assign a hotkey:
-     - Right-click the shortcut → Properties
-     - Shortcut tab → Shortcut Key field
-     - Press your desired key combo (e.g., Ctrl+Alt+M)
-     - Change Target to `pythonw.exe "C:\path\to\capture.py"` to suppress the console window
-     - Click Apply → OK
-
-   - (Optional) Move the shortcut to `C:\Users\<YourUsername>\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup` for auto-availability
-
-5. **Test the setup**
-   ```bash
-   python tests/test_parse.py
-   ```
-   Should print `PASS` and exit with code 0.
+   This writes `dist/meeting-to-obsidian.zip` (your `config.json` is included if present).
+3. In Claude, go to Settings → Capabilities → Skills and upload `dist/meeting-to-obsidian.zip`.
+4. When you start a Cowork task, give it access to your vault folder. The skill finds the shared folder that contains `.obsidian/`.
 
 ## Usage
 
-### Normal Workflow
+Example prompts:
 
-1. Join a Teams meeting. After it ends, Copilot generates a recap.
-2. Open the recap in Teams and select all text: **Ctrl+A**
-3. Copy it: **Ctrl+C**
-4. Trigger the hotkey (e.g., **Ctrl+Alt+M**)
-5. A toast notification appears with the path where the note was saved
-6. The markdown file is immediately visible in Obsidian
+- "File yesterday's meetings to Obsidian"
+- "Save the Acme quarterly review to my vault"
+- "File this week's customer meetings"
+- "File this recap: `<paste>`"
+- "Refresh the note for today's standup" (uses `--update`)
 
-### Manual Usage (No Hotkey)
+Claude finishes with a short list of each meeting and its outcome, with the note path:
 
-If you haven't set up a hotkey, run the script manually:
+| Outcome | Meaning |
+|---|---|
+| created | A new note was written. |
+| already filed | A note with that meeting id exists; nothing was written. |
+| skipped | The meeting has no recap or transcript, so there is nothing to file. |
 
-```bash
-# Make sure the recap is on your clipboard first
-python capture.py
-```
+Refreshing overwrites the existing note, including any edits you made to it, so Claude only does it when you ask.
 
-The script will:
-- Read the clipboard
-- Parse it for title, date, time, attendees, summary, and action items
-- Write a markdown file to `vault/meetings_subfolder/<year>/`
-- Show a confirmation toast (Windows) or console message
+## Automating It
 
-## How It Parses
+Create a Cowork scheduled task, for example weekdays at end of day with the prompt "File today's meetings to Obsidian". It runs on your machine, so it can reach your local vault. Your computer must be awake and the Claude desktop app running.
 
-The parser is deterministic and regex-based—no AI at runtime. It looks for section headers (lines ending with `:`) and categorizes content:
+Cloud-run routines can't see a local vault; they would need the vault synced to a git remote.
 
-- **Attendees**: Lines under "Attendees:" or "Participants:" → split by comma/semicolon
-- **Summary**: Lines under "Summary:", "Recap:", "Notes:", "Key Points:", "Meeting Notes:", etc. → bullet-point list
-- **Action Items**: Lines under "Action Items:", "Follow-ups:", "Next Steps:", "Tasks:", etc. → checkbox list (for Obsidian)
-- **Title**: First non-generic heading after "Meeting Notes:" or first heading overall
-- **Date**: Scanned from the first 20 lines; supports ISO (2026-06-25), US (June 25, 2026), and slash (6/25/2026) formats; falls back to today if not found
-- **Time**: Scanned from the first 20 lines; captures 12-hour (2:00 PM) or 24-hour (14:00) format
+## Note Format
 
-**Sections to skip:** Transcript, Chapters, "Generated by AI"
+Notes are written to `<vault>/<meetings_subfolder>/<YYYY>/YYYY-MM-DD - Title.md`. A note with every field set:
 
-### Example Input
-```
-Acme Corp Quarterly Review
-June 25, 2026 2:00 PM
-
-Attendees: Tony Jiang, Alice Chen, Bob Rivera, Carol Singh
-
-Summary
-- Reviewed Q2 numbers; Acme is up 12% on renewal-weighted ARR.
-- Discussed expansion into the European market for Q4.
-
-Action Items
-- Tony to send the updated pricing FAQ by Friday.
-- Bob to schedule a follow-up with Acme's procurement lead next week.
-```
-
-### Example Output
 ```markdown
 ---
+meeting_id: "AAMkAGI2TG93AAA="
 date: 2026-06-25
-time: 2:00 PM
-attendees: [Tony Jiang, Alice Chen, Bob Rivera, Carol Singh]
-tags: [meeting, customer]
+time: "14:00-15:00"
+organizer: "[[Tony Jiang]]"
+company: "[[Acme Corp]]"
+attendees:
+  - "[[Tony Jiang]]"
+  - "[[Alice Chen]]"
+tags:
+  - meeting
+  - customer
+source: "https://teams.microsoft.com/l/meetingrecap?x=1"
 ---
 
 # Acme Corp Quarterly Review
 
-**Date:** 2026-06-25 2:00 PM
-**Attendees:** Tony Jiang, Alice Chen, Bob Rivera, Carol Singh
+**Date:** 2026-06-25 14:00-15:00
+**Company:** [[Acme Corp]]
+**Attendees:** [[Tony Jiang]], [[Alice Chen]]
 
 ## Summary
-- Reviewed Q2 numbers; Acme is up 12% on renewal-weighted ARR.
-- Discussed expansion into the European market for Q4.
+- Reviewed Q2 numbers.
+- Discussed EU expansion.
+
+## Decisions
+- Proceed with EU pilot in Q4.
 
 ## Action Items
-- [ ] Tony to send the updated pricing FAQ by Friday.
-- [ ] Bob to schedule a follow-up with Acme's procurement lead next week.
+- [ ] Send updated pricing FAQ — [[Tony Jiang]] 📅 2026-06-27
+- [ ] Schedule procurement follow-up — [[Bob Rivera]]
+- [ ] Draft EU compliance one-pager
+
+## Notes
+Free-form markdown here.
+
+[Open Teams recap](https://teams.microsoft.com/l/meetingrecap?x=1)
 ```
 
-Files are organized by year: `2026/2026-06-25 - Acme Corp Quarterly Review.md`
+Optional lines and sections are omitted when empty. Action items use Obsidian Tasks-compatible syntax, so you can list every open item across all meetings with the Tasks plugin (put your own `meetings_subfolder` in the `path` line):
+
+````markdown
+```tasks
+not done
+path includes Customer Meetings
+```
+````
+
+## Configuration
+
+`config.json` lives in the skill folder (`skills/meeting-to-obsidian/config.json`). Missing keys fall back to the defaults.
+
+| Key | Default | Description |
+|---|---|---|
+| `vault_path` | none | Absolute path to your Obsidian vault. |
+| `meetings_subfolder` | `Meetings` | Folder inside the vault where notes go. |
+| `default_tags` | `["meeting"]` | Tags added to every note, before any tags in the payload. |
+| `link_people` | `true` | Write attendees, organizer and action-item owners as `[[wikilinks]]`. |
+| `link_company` | `true` | Write the company as a `[[wikilink]]`. |
+
+The vault is resolved in this order: `--vault`, then the `OBSIDIAN_VAULT` environment variable, then `vault_path` in `config.json`.
+
+## Writer CLI Reference
+
+Claude calls this for you, but you can use it without Claude by hand-writing a JSON payload (`title` and `date` are required; see `SKILL.md` for the full field list).
+
+```bash
+# Write a note from a JSON payload on stdin
+python skills/meeting-to-obsidian/scripts/write_note.py
+
+# Read the payload from a file instead of stdin
+python skills/meeting-to-obsidian/scripts/write_note.py --input payload.json
+
+# Print the rendered markdown without writing anything
+python skills/meeting-to-obsidian/scripts/write_note.py --input payload.json --dry-run
+
+# Overwrite an already-filed note (replaces any edits you made to it)
+python skills/meeting-to-obsidian/scripts/write_note.py --input payload.json --update
+
+# List filed meetings (JSON) with dates on or after the given day
+python skills/meeting-to-obsidian/scripts/write_note.py --filed --since 2026-06-01
+```
+
+Other flags: `--vault PATH` and `--config PATH` (use a different config file). On Windows, use `py` if `python` isn't found.
+
+A normal run prints one JSON line:
+
+```json
+{"status": "created", "path": "<vault>/Meetings/2026/2026-06-25 - Acme Corp Quarterly Review.md", "meeting_id": "AAMkAGI2TG93AAA="}
+```
+
+`status` is `created`, `exists` (already filed, nothing written) or `updated` (with `--update`). Errors print `{"status": "error", "error": "..."}` and exit with code 2.
 
 ## Testing
 
-Run the regression test to verify the parser works on a sample recap:
-
 ```bash
-python tests/test_parse.py
+python -m unittest discover -s tests -v
 ```
 
-The test parses `tests/fixtures/sample_recap.txt` and compares the output against `tests/fixtures/sample_recap.expected.md`. Both files are checked into the repo for reference.
-
-## File Structure
+## Repo Layout
 
 ```
 meeting-notes-automation/
-├── capture.py                             # Main script
-├── config.json                            # User configuration (vault path, tags, etc.)
-├── requirements.txt                       # Python dependencies
-├── README.md                              # This file
+├── skills/
+│   └── meeting-to-obsidian/
+│       ├── SKILL.md               # The skill's workflow
+│       ├── config.example.json    # Copy to config.json and edit
+│       └── scripts/
+│           └── write_note.py      # Deterministic note writer
+├── scripts/
+│   └── package_skill.py           # Builds dist/meeting-to-obsidian.zip
 ├── tests/
-│   ├── test_parse.py                      # Regression test
+│   ├── test_write_note.py
 │   └── fixtures/
-│       ├── sample_recap.txt               # Example Teams recap (input)
-│       └── sample_recap.expected.md       # Expected parser output
-└── .claude/                               # Claude Code settings (optional, for development)
+├── routing-log.md                 # Planning and cost log
+└── README.md
 ```
 
-## Troubleshooting
+## Privacy
 
-### "Clipboard is empty"
-- Ensure you copied the recap (Ctrl+A, Ctrl+C inside the Teams recap pane) before triggering the script.
-
-### "pyperclip not installed"
-- Run: `pip install -r requirements.txt`
-
-### No file written; no toast appears
-- Check that `config.json` exists and contains valid paths.
-- Verify the vault path in `config.json` matches your actual Obsidian vault.
-- Ensure the vault path is writable and the drive has free space.
-- Check console output (if running from CMD): `python capture.py 2>&1`
-
-### Parser misses fields (date, attendees, etc.)
-- Teams recap formats vary. If a real recap doesn't parse correctly:
-  - Manually copy a problematic recap to `tests/fixtures/sample_recap.txt`
-  - Update `tests/fixtures/sample_recap.expected.md` with the desired output
-  - Run `python tests/test_parse.py` to identify which regex patterns need adjustment
-  - Open an issue or PR with the example
-
-### Hotkey doesn't work
-- Verify the shortcut file is in a startup folder or you've manually assigned the hotkey (right-click shortcut → Properties → Shortcut tab).
-- Some Windows security tools block hotkeys for `.py` files. You may need to create a `.bat` wrapper:
-  ```batch
-  @echo off
-  python C:\path\to\capture.py
-  ```
-  Then assign the hotkey to the `.bat` file instead.
-
-## Limitations & Notes
-
-- **Attendee extraction is best-effort**: Without an explicit "Attendees:" header, the parser cannot reliably find attendee names. If attendees are missing, it's likely the recap format differs from the expected template.
-- **Transcript is skipped**: Full meeting transcripts are intentionally excluded from the parsed output to keep notes concise; you can refer back to Teams for the full transcript if needed.
-- **Date fallback**: If no date is found in the recap, the script uses today's date. This is rare with Copilot recaps, which typically include a date.
-- **Windows-only hotkey setup**: The hotkey trigger is Windows-specific. On macOS/Linux, run the script manually or set up an equivalent with your OS's automation tool (Automator, shell alias, etc.).
-
-## Contributing
-
-Found a bug or have an idea for an improvement?
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/your-idea`)
-3. Add a test case if fixing a parser issue
-4. Commit and push
-5. Open a pull request
-
-## License
-
-MIT License. See LICENSE for details (or add your preferred license).
+Notes are written only to your local vault, and the script makes no network calls. Meeting content passes through Claude and your Microsoft 365 connector under your organization's policies.
 
 ## Changelog
 
+- **v2.0** (2026-10-02): Replaced the clipboard macro and regex parser with a Claude skill
+  - Claude reads meetings through the Microsoft 365 connector and extracts summary, decisions and action items
+  - Deterministic writer script: fixed folder, filename and frontmatter, de-duplicated by meeting id
+  - Cowork packaging script and scheduled-task automation
 - **v1.0** (2026-07-13): Initial release
   - Clipboard → Obsidian vault pipeline
   - Deterministic regex parser for Teams recaps
   - Windows hotkey support via `.lnk` shortcut
   - Regression test suite
+
+## License
+
+MIT License. See LICENSE for details (or add your preferred license).
