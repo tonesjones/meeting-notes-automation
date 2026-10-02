@@ -1,0 +1,7 @@
+{
+  "vault_path": "C:\\Users\\<you>\\Documents\\<VaultName>",
+  "meetings_subfolder": "Customer Meetings",
+  "default_tags": ["meeting"],
+  "link_people": true,
+  "link_company": true
+}
